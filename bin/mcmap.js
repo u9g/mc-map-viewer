@@ -130,6 +130,9 @@ function merge (fileConfig, opts) {
     if (key === 'config' || key === 'help' || key === 'port') continue
     merged[key] = value
   }
+  // --radius asks for one box somewhere, which the config's own areas would
+  // otherwise quietly win over — leaving the flag doing nothing at all.
+  if (opts.radius !== undefined && opts.areas.length === 0) delete merged.areas
   return merged
 }
 

@@ -74,6 +74,7 @@ async function build (config, { root = process.cwd(), log = () => {} } = {}) {
     pad: opts.pad,
     trim: opts.trim,
     maxBlocks: opts.maxBlocks,
+    maxScan: opts.maxScan,
     scanLimit: opts.scanLimit,
     outDir: path.join(outDir, 'schems'),
     log

@@ -25,8 +25,19 @@ const { Reader } = require('./reader')
 /** How many blocks one area may span before this is the wrong tool. */
 const DEFAULT_MAX_BLOCKS = 8_000_000
 
-/** Chunks `auto` will open looking for content before giving up. */
-const DEFAULT_SCAN_LIMIT = 4096
+/** How many blocks one area may be searched through before that is absurd. */
+const DEFAULT_MAX_SCAN = 60_000_000
+
+/** Chunks the area search will open before giving up. */
+const DEFAULT_SCAN_LIMIT = 20000
+
+/** Region files the area search will look through before giving up. */
+const DEFAULT_MAX_REGIONS = 16
+
+/** Blocks in a box, inclusive of both corners. */
+const volume = box =>
+  (box.max[0] - box.min[0] + 1) * (box.max[1] - box.min[1] + 1) *
+  (box.max[2] - box.min[2] + 1)
 
 /** Sorts a pair of corners into inclusive min/max, and clamps y to the world. */
 function normalise (from, to, reader) {
@@ -77,24 +88,35 @@ async function trimToContent (reader, min, max, pad) {
  * schematic first.
  */
 async function extractArea (reader, area, opts) {
-  const { pad = 1, trim = true, maxBlocks = DEFAULT_MAX_BLOCKS, outDir } = opts
+  const {
+    pad = 1, trim = true, outDir,
+    maxBlocks = DEFAULT_MAX_BLOCKS, maxScan = DEFAULT_MAX_SCAN
+  } = opts
 
   // A first block read settles the world's y bounds before the box is clamped.
   await reader.stateId(area.from[0], area.from[1], area.from[2])
   let box = normalise(area.from, area.to, reader)
 
-  const span = (box.max[0] - box.min[0] + 1) * (box.max[1] - box.min[1] + 1) *
-    (box.max[2] - box.min[2] + 1)
-  if (span > maxBlocks) {
-    throw new Error(`area "${area.id}" spans ${span.toLocaleString()} blocks, ` +
-      `over the ${maxBlocks.toLocaleString()} limit. Narrow it, or raise ` +
-      '--max-blocks if you are sure the browser can hold it.')
+  // Two different limits. Searching a box costs time, and a generous box is
+  // the point — you bracket a build roughly and let the trim find its edges.
+  // Shipping one costs the browser memory, and that is judged on what is left
+  // after trimming, not on how wide you cast the net.
+  if (volume(box) > maxScan) {
+    throw new Error(`area "${area.id}" is ${volume(box).toLocaleString()} ` +
+      `blocks to search through, over the ${maxScan.toLocaleString()} limit. ` +
+      'Give it tighter corners.')
   }
 
   if (trim) {
     const trimmed = await trimToContent(reader, box.min, box.max, pad)
     if (!trimmed) return null
     box = trimmed
+  }
+
+  if (volume(box) > maxBlocks) {
+    throw new Error(`area "${area.id}" holds ${volume(box).toLocaleString()} ` +
+      `blocks, over the ${maxBlocks.toLocaleString()} limit. Narrow it, or ` +
+      'raise --max-blocks if you are sure the browser can hold it.')
   }
 
   const [w, h, l] = [0, 1, 2].map(i => box.max[i] - box.min[i] + 1)
@@ -139,25 +161,43 @@ async function extractArea (reader, area, opts) {
 }
 
 /**
- * Finds where the world's content is, for when no areas were configured.
+ * Finds what is worth showing, for when no areas were configured.
  *
- * Chunk sections carry a solid block count, so whole 16-block slabs of sky and
- * stone-free void are ruled out without looking at a single block. Only the
- * sections that survive get scanned properly.
+ * A single box around everything is nearly useless on the sort of map this
+ * tool is for: separate set-pieces hundreds of blocks apart would come out as
+ * one area that is mostly empty sky. So populated chunks are grouped into
+ * clusters — anything within `gap` chunks of another populated chunk joins it —
+ * and each cluster becomes its own area, biggest first.
+ *
+ * Chunk sections carry a solid block count, so this never looks at a block:
+ * the y range and the "is this worth keeping" judgement both come from the
+ * section headers.
  */
-async function autoArea (reader, save, dimension, opts = {}) {
+async function findAreas (reader, save, dimension, opts = {}) {
   const scanLimit = opts.scanLimit || DEFAULT_SCAN_LIMIT
-  const lo = [Infinity, Infinity, Infinity]
-  const hi = [-Infinity, -Infinity, -Infinity]
+  const maxRegions = opts.maxRegions || DEFAULT_MAX_REGIONS
+  const gap = opts.gap === undefined ? 4 : opts.gap
+  const maxAreas = opts.maxAreas || 12
+  const minBlocks = opts.minBlocks === undefined ? 200 : opts.minBlocks
+
+  const regions = save.regions(dimension)
+  if (regions.length > maxRegions) {
+    throw new Error(`this world has ${regions.length} region files, too much ` +
+      'to search through for interesting bits. Name the areas you want with ' +
+      '--area, or point --radius at a spot worth showing.')
+  }
+
+  /** Populated chunks, as "cx,cz" -> { cx, cz, minY, maxY, solid }. */
+  const populated = new Map()
   let scanned = 0
 
-  for (const region of save.regions(dimension)) {
+  for (const region of regions) {
     for (let lz = 0; lz < 32; lz++) {
       for (let lx = 0; lx < 32; lx++) {
         if (scanned >= scanLimit) {
           throw new Error(`gave up after opening ${scanLimit} chunks looking ` +
-            'for content. This world is too big to guess at — name the areas ' +
-            'you want with --area, or point --radius at a spot worth showing.')
+            'for content. Name the areas you want with --area, or point ' +
+            '--radius at a spot worth showing.')
         }
         const cx = region.rx * 32 + lx
         const cz = region.rz * 32 + lz
@@ -165,24 +205,83 @@ async function autoArea (reader, save, dimension, opts = {}) {
         if (!column) continue
         scanned++
 
+        const floor = column.minY === undefined ? 0 : column.minY
+        let minY = Infinity
+        let maxY = -Infinity
+        let solid = 0
         const sections = column.sections || []
         for (let i = 0; i < sections.length; i++) {
           const section = sections[i]
           if (!section || !section.solidBlockCount) continue
-          const y0 = (column.minY === undefined ? 0 : column.minY) + i * 16
-          if (cx * 16 < lo[0]) lo[0] = cx * 16
-          if (cz * 16 < lo[2]) lo[2] = cz * 16
-          if (y0 < lo[1]) lo[1] = y0
-          if (cx * 16 + 15 > hi[0]) hi[0] = cx * 16 + 15
-          if (cz * 16 + 15 > hi[2]) hi[2] = cz * 16 + 15
-          if (y0 + 15 > hi[1]) hi[1] = y0 + 15
+          solid += section.solidBlockCount
+          minY = Math.min(minY, floor + i * 16)
+          maxY = Math.max(maxY, floor + i * 16 + 15)
+        }
+        if (solid > 0) populated.set(`${cx},${cz}`, { cx, cz, minY, maxY, solid })
+      }
+    }
+    // Columns are held to answer the scan; the extraction that follows will
+    // read them again, and holding a whole world of them is what runs a
+    // machine out of memory.
+    reader.forget()
+  }
+
+  if (populated.size === 0) throw new Error('this world has no blocks in it')
+
+  const clusters = cluster(populated, gap)
+    .filter(c => c.solid >= minBlocks)
+    .sort((a, b) => b.solid - a.solid)
+    .slice(0, maxAreas)
+
+  if (clusters.length === 0) {
+    throw new Error(`nothing in this world is bigger than ${minBlocks} blocks; ` +
+      'name an area with --area if there is something small worth seeing')
+  }
+
+  const single = clusters.length === 1
+  return clusters.map((c, i) => ({
+    id: single ? 'world' : `area-${i + 1}`,
+    from: [c.minX * 16, c.minY, c.minZ * 16],
+    to: [c.maxX * 16 + 15, c.maxY, c.maxZ * 16 + 15]
+  }))
+}
+
+/** Flood-fills populated chunks into groups, joining any within `gap` chunks. */
+function cluster (populated, gap) {
+  const seen = new Set()
+  const groups = []
+
+  for (const key of populated.keys()) {
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    const group = {
+      minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity,
+      minY: Infinity, maxY: -Infinity, solid: 0
+    }
+    const queue = [key]
+    while (queue.length) {
+      const chunk = populated.get(queue.pop())
+      group.minX = Math.min(group.minX, chunk.cx)
+      group.maxX = Math.max(group.maxX, chunk.cx)
+      group.minZ = Math.min(group.minZ, chunk.cz)
+      group.maxZ = Math.max(group.maxZ, chunk.cz)
+      group.minY = Math.min(group.minY, chunk.minY)
+      group.maxY = Math.max(group.maxY, chunk.maxY)
+      group.solid += chunk.solid
+
+      for (let dx = -gap; dx <= gap; dx++) {
+        for (let dz = -gap; dz <= gap; dz++) {
+          const near = `${chunk.cx + dx},${chunk.cz + dz}`
+          if (!populated.has(near) || seen.has(near)) continue
+          seen.add(near)
+          queue.push(near)
         }
       }
     }
+    groups.push(group)
   }
-
-  if (lo[0] === Infinity) throw new Error('this world has no blocks in it')
-  return { id: 'world', from: lo, to: hi }
+  return groups
 }
 
 function titleCase (id) {
@@ -202,10 +301,10 @@ async function extractAll (save, opts) {
 
   let wanted = areas
   if (!wanted || wanted.length === 0) {
-    log('no areas given; looking for where the world has content…')
-    wanted = [await autoArea(reader, save, dimension, opts)]
-    const [f, t] = [wanted[0].from, wanted[0].to]
-    log(`  found content from ${f.join(', ')} to ${t.join(', ')}`)
+    log('no areas given; looking for what this world has in it…')
+    wanted = await findAreas(reader, save, dimension, opts)
+    log(`  found ${wanted.length} area${wanted.length === 1 ? '' : 's'}; ` +
+      'put them in mcmap.json to name and describe them')
     reader.forget()
   }
 
@@ -229,4 +328,4 @@ async function extractAll (save, opts) {
   return { areas: manifest, substitutions }
 }
 
-module.exports = { extractAll, extractArea, autoArea, DEFAULT_MAX_BLOCKS }
+module.exports = { extractAll, extractArea, findAreas, cluster, DEFAULT_MAX_BLOCKS }

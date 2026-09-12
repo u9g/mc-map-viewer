@@ -51,8 +51,11 @@ mcmap build --world ./world \
   --area koth=287,63,-33:353,77,33
 ```
 
-Or skip them: `--radius 128` takes a box that size around the world spawn, and
-with neither, the build finds where the world has blocks and shows that.
+Or skip them. `--radius 128` takes a box that size around the world spawn, and
+with neither, the build goes looking: populated chunks are grouped into
+clusters, and each cluster that holds anything substantial becomes its own
+area. On a map of separate set-pieces that finds them one by one, and prints
+what it found so you can paste it into `mcmap.json` and give each one a name.
 
 Boxes are generous on purpose — each one is trimmed to what is actually in it
 before it is written, so you can bracket a build roughly and let the tool find
