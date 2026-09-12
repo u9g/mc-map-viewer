@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2311131a'/%3E%3Crect x='3' y='6' width='10' height='7' fill='%234bc4a8'/%3E%3Crect x='5' y='3' width='6' height='3' fill='%2398e6d2'/%3E%3C/svg%3E">
+<title>{{TITLE}}</title>
+<!-- Filled in by the build, so a pasted link unfurls with the map's own name. -->
+<meta name="description" content="{{DESCRIPTION}}">
+<meta property="og:title" content="{{TITLE}}">
+<meta property="og:description" content="{{DESCRIPTION}}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<style>
+  :root{
+    --bg:#11131a; --panel:rgba(18,21,29,.88); --line:rgba(255,255,255,.14);
+    --fg:#e8ecf4; --dim:#98a2b8; --accent:#4bc4a8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #canvas-host{position:fixed;inset:0}
+  #canvas-host canvas{display:block}
+
+  header{position:fixed;top:0;left:0;right:0;z-index:10;padding:12px 16px;
+    background:linear-gradient(var(--panel),rgba(18,21,29,0));pointer-events:none}
+  h1{margin:0 0 2px;font-size:15px;font-weight:650;letter-spacing:.2px}
+  h1 span{color:var(--dim);font-weight:400}
+  #blurb{margin:0;color:var(--dim);font-size:13px;max-width:60ch}
+
+  #controls{position:fixed;left:16px;bottom:16px;z-index:10;display:flex;
+    flex-wrap:wrap;gap:6px;align-items:center}
+  .area-btn,#fit,#mode,#share{font:inherit;font-size:13px;padding:7px 13px;
+    border-radius:8px;cursor:pointer;color:var(--fg);background:var(--panel);
+    border:1px solid var(--line);backdrop-filter:blur(8px);transition:.15s}
+  .area-btn:hover,#fit:hover,#mode:hover,#share:hover{border-color:var(--accent);color:#fff}
+  .area-btn.active{background:var(--accent);border-color:var(--accent);
+    color:#06231d;font-weight:600}
+  #fit{margin-left:8px;color:var(--dim)}
+  #mode{color:var(--dim);font-variant-numeric:tabular-nums}
+  #mode.on{color:var(--accent);border-color:rgba(75,196,168,.55)}
+  #share{color:var(--dim)}
+
+  #keys{position:fixed;right:16px;top:16px;z-index:10;display:grid;
+    grid-template-columns:auto auto;gap:3px 10px;align-items:center;
+    padding:11px 13px;border-radius:10px;background:var(--panel);
+    border:1px solid var(--line);backdrop-filter:blur(8px);
+    color:var(--dim);font-size:12px}
+  #keys b{justify-self:end;color:var(--fg);font-weight:600;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;
+    background:rgba(255,255,255,.08);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px}
+
+  #status{position:fixed;right:16px;bottom:18px;z-index:10;color:var(--dim);
+    font-size:12.5px;text-align:right;max-width:46ch}
+  #status.busy::after{content:"";display:inline-block;width:9px;height:9px;
+    margin-left:7px;border:2px solid var(--dim);border-top-color:transparent;
+    border-radius:50%;vertical-align:-1px;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  @media (max-width:900px){ #keys{display:none} }
+  @media (max-width:640px){
+    #blurb{display:none}
+    #status{display:none}
+    #controls{left:8px;right:8px;bottom:8px}
+  }
+</style>
+</head>
+<body>
+  <div id="canvas-host"></div>
+  <header>
+    <h1><span id="title">{{TITLE}}</span><span id="subtitle"></span></h1>
+    <p id="blurb">Loading…</p>
+  </header>
+  <div id="controls">
+    <div id="areas" style="display:contents"></div>
+    <button id="mode">Fly (WASD)</button>
+    <button id="fit">Reset view</button>
+    <button id="share">Copy link</button>
+  </div>
+  <div id="keys">
+    <b>W A S D</b><span>move</span>
+    <b>Space</b><span>up</span>
+    <b>Shift</b><span>down</span>
+    <b>Ctrl</b><span>sprint</span>
+    <b>Mouse</b><span>look (click first)</span>
+    <b>Scroll</b><span>fly speed</span>
+    <b>Esc</b><span>release cursor</span>
+  </div>
+  <div id="status">starting…</div>
+  <script src="index.js"></script>
+</body>
+</html>
